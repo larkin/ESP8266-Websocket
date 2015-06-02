@@ -1,6 +1,9 @@
 //#define DEBUGGING
 //#define SUPPORT_HIXIE_76
 
+//MS:
+#include <string.h>
+
 #include "global.h"
 #include "WebSocketServer.h"
 
@@ -176,9 +179,14 @@ bool WebSocketServer::analyzeRequest(int bufferLength) {
             char result[21];
             char b64Result[30];
 
-            Sha1.init();
-            Sha1.print(newkey);
-            hash = Sha1.result();
+            SHA1Context sha;
+            int err;
+            uint8_t Message_Digest[20];
+            
+            err = SHA1Reset(&sha);
+            err = SHA1Input(&sha, reinterpret_cast<const uint8_t *>(newkey.c_str()), newkey.length());
+            err = SHA1Result(&sha, Message_Digest);
+            hash = Message_Digest;
 
             for (int i=0; i<20; ++i) {
                 result[i] = (char)hash[i];

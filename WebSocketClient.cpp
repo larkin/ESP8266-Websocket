@@ -1,5 +1,8 @@
 //#define DEBUGGING
 
+//MS:
+#include <string.h>
+
 #include "global.h"
 #include "WebSocketClient.h"
 
@@ -118,9 +121,14 @@ bool WebSocketClient::analyzeRequest() {
     char result[21];
     char b64Result[30];
 
-    Sha1.init();
-    Sha1.print(key);
-    hash = Sha1.result();
+    SHA1Context sha;
+    int err;
+    uint8_t Message_Digest[20];
+    
+    err = SHA1Reset(&sha);
+    err = SHA1Input(&sha, reinterpret_cast<const uint8_t *>(key.c_str()), key.length());
+    err = SHA1Result(&sha, Message_Digest);
+    hash = Message_Digest;
 
     for (int i=0; i<20; ++i) {
         result[i] = (char)hash[i];
