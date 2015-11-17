@@ -422,14 +422,12 @@ void WebSocketServer::sendEncodedData(char *str) {
     if (size > 125) {
         socket_client->write(126);
         socket_client->write((uint8_t) (size >> 8));
-        socket_client->write((uint8_t) (size && 0xFF));
+        socket_client->write((uint8_t) (size & 0xFF));
     } else {
         socket_client->write((uint8_t) size);
     }
 
-    for (int i=0; i<size; ++i) {
-        socket_client->write(str[i]);
-    }
+    socket_client->print(str);
 }
 
 void WebSocketServer::sendEncodedData(String str) {
