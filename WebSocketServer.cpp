@@ -2,7 +2,6 @@
 //#define SUPPORT_HIXIE_76
 
 //MS:
-#include <string.h>
 
 #include "global.h"
 #include "WebSocketServer.h"
@@ -12,7 +11,7 @@
 #endif
 
 #include "sha1.h"
-#include "base64.h"
+#include "Base64.h"
 
 
 bool WebSocketServer::handshake(Client &client) {
