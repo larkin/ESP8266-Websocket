@@ -15,7 +15,6 @@
 
 
 bool WebSocketServer::handshake(Client &client) {
-
     socket_client = &client;
 
     // If there is a connected client->
@@ -36,7 +35,7 @@ bool WebSocketServer::handshake(Client &client) {
 #ifdef DEBUGGING
             Serial.println(F("Disconnecting client"));
 #endif
-            disconnectStream();
+            terminateStream(0x87);
 
             return false;
         }
@@ -47,12 +46,14 @@ bool WebSocketServer::handshake(Client &client) {
 
 bool WebSocketServer::analyzeRequest(int bufferLength) {
     // Use String library to do some sort of read() magic here.
-    String temp;
-
+    String temp,tempLc;
+    int charpos;
     int bite;
     bool foundupgrade = false;
+#ifdef SUPPORT_HIXIE_76
     String oldkey[2];
     unsigned long intkey[2];
+#endif
     String newkey;
 
     hixie76style = false;
@@ -61,36 +62,54 @@ bool WebSocketServer::analyzeRequest(int bufferLength) {
     Serial.println(F("Analyzing request headers"));
 #endif
 
+    for (int i = 0; i < 10 && !socket_client->available(); i++) {
+      delay(20);
+    }
+
     // TODO: More robust string extraction
     while ((bite = socket_client->read()) != -1) {
 
         temp += (char)bite;
 
         if ((char)bite == '\n') {
+            // Recieved CRNL without content, so header is done
+#ifndef SUPPORT_HIXIE_76
+            if (temp.charAt(0) == '\r') break;
+#endif
 #ifdef DEBUGGING
             Serial.print("Got Line: " + temp);
 #endif
-            // TODO: Should ignore case when comparing and allow 0-n whitespace after ':'. See the spec:
+            // Preserve mixed case vor values
+            tempLc = temp;
+            // Remove whitespaces and convert to lowercase to comply
             // http://www.w3.org/Protocols/rfc2616/rfc2616-sec4.html
-            if (!foundupgrade && temp.startsWith("Upgrade: WebSocket")) {
+            tempLc.toLowerCase();
+            while ((charpos = temp.indexOf(' ')) != -1) {
+                temp.remove(charpos,1);
+            }
+            if (!foundupgrade && tempLc.startsWith("upgrade:") && temp.indexOf("WebSocket") != -1) {
                 // OK, it's a websockets handshake for sure
                 foundupgrade = true;
                 hixie76style = true;
-            } else if (!foundupgrade && temp.startsWith("Upgrade: websocket")) {
+            } else if (!foundupgrade && tempLc.startsWith("upgrade:") && temp.indexOf("websocket") != -1) {
                 foundupgrade = true;
                 hixie76style = false;
-            } else if (temp.startsWith("Origin: ")) {
-                origin = temp.substring(8,temp.length() - 2); // Don't save last CR+LF
-            } else if (temp.startsWith("Host: ")) {
-                host = temp.substring(6,temp.length() - 2); // Don't save last CR+LF
-            } else if (temp.startsWith("Sec-WebSocket-Key1: ")) {
-                oldkey[0]=temp.substring(20,temp.length() - 2); // Don't save last CR+LF
-            } else if (temp.startsWith("Sec-WebSocket-Key2: ")) {
-                oldkey[1]=temp.substring(20,temp.length() - 2); // Don't save last CR+LF
-            } else if (temp.startsWith("Sec-WebSocket-Key: ")) {
-                newkey=temp.substring(19,temp.length() - 2); // Don't save last CR+LF
+            } else if (tempLc.startsWith("origin:")) {
+                origin = temp.substring(7,temp.length() - 2); // Don't save last CR+LF
+            } else
+#ifdef SUPPORT_HIXIE_76
+            if (tempLc.startsWith("host:")) {
+                host = temp.substring(5,temp.length() - 2); // Don't save last CR+LF
+            } else if (tempLcLc.startsWith("sec-websocket-key1:")) {
+                oldkey[0]=tempLc.substring(19,temp.length() - 2); // Don't save last CR+LF
+            } else if (temp.startsWith("sec-websocket-key2:")) {
+                oldkey[1]=tempLc.substring(19,temp.length() - 2); // Don't save last CR+LF
+            } else
+#endif
+            if (tempLc.startsWith("sec-websocket-key:")) {
+                newkey=temp.substring(18,temp.length() - 2); // Don't save last CR+LF
             }
-            temp = "";		
+            temp = "";        
         }
 
         if (!socket_client->available()) {
@@ -131,14 +150,14 @@ bool WebSocketServer::analyzeRequest(int bufferLength) {
                 }
                 char numberschar[numbers.length() + 1];
                 numbers.toCharArray(numberschar, numbers.length()+1);
-                intkey[i] = strtoul(numberschar, NULL, 10) / spaces;		
+                intkey[i] = strtoul(numberschar, NULL, 10) / spaces;        
             }
             
             unsigned char challenge[16] = {0};
             challenge[0] = (unsigned char) ((intkey[0] >> 24) & 0xFF);
             challenge[1] = (unsigned char) ((intkey[0] >> 16) & 0xFF);
             challenge[2] = (unsigned char) ((intkey[0] >>  8) & 0xFF);
-            challenge[3] = (unsigned char) ((intkey[0]      ) & 0xFF);	
+            challenge[3] = (unsigned char) ((intkey[0]      ) & 0xFF);    
             challenge[4] = (unsigned char) ((intkey[1] >> 24) & 0xFF);
             challenge[5] = (unsigned char) ((intkey[1] >> 16) & 0xFF);
             challenge[6] = (unsigned char) ((intkey[1] >>  8) & 0xFF);
@@ -181,7 +200,7 @@ bool WebSocketServer::analyzeRequest(int bufferLength) {
             SHA1Context sha;
             int err;
             uint8_t Message_Digest[20];
-            
+            Serial.println("Calculating");
             err = SHA1Reset(&sha);
             err = SHA1Input(&sha, reinterpret_cast<const uint8_t *>(newkey.c_str()), newkey.length());
             err = SHA1Result(&sha, Message_Digest);
@@ -193,15 +212,14 @@ bool WebSocketServer::analyzeRequest(int bufferLength) {
             result[20] = '\0';
 
             base64_encode(b64Result, result, 20);
-
-            socket_client->print(F("HTTP/1.1 101 Web Socket Protocol Handshake\r\n"));
-            socket_client->print(F("Upgrade: websocket\r\n"));
-            socket_client->print(F("Connection: Upgrade\r\n"));
-            socket_client->print(F("Sec-WebSocket-Accept: "));
-            socket_client->print(b64Result);
-            socket_client->print(CRLF);
-            socket_client->print(CRLF);
-
+            Serial.println("Sending");
+            char * response = (char*)malloc(200);
+            sprintf(response, "HTTP/1.1 101 Web Socket Protocol Handshake\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", b64Result);
+            socket_client->print(response);
+#ifdef DEBUGGING
+            Serial.print(response);
+#endif
+            free(response);
             return true;
         } else {
             // something went horribly wrong
@@ -258,18 +276,19 @@ String WebSocketServer::handleHixie76Stream() {
 
 String WebSocketServer::handleStream() {
     uint8_t msgtype;
-    uint8_t bite;
     unsigned int length;
     uint8_t mask[4];
-    uint8_t index;
     unsigned int i;
 
     // String to hold bytes sent by client to server.
     String socketString;
 
     if (socket_client->connected() && socket_client->available()) {
-
         msgtype = timedRead();
+        if (msgtype == 0x88) {
+            disconnectStream();
+            return socketString;
+        }
         if (!socket_client->connected()) {
             return socketString;
         }
@@ -278,8 +297,6 @@ String WebSocketServer::handleStream() {
         if (!socket_client->connected()) {
             return socketString;
         }
-
-        index = 6;
 
         if (length == 126) {
             length = timedRead() << 8;
@@ -296,9 +313,8 @@ String WebSocketServer::handleStream() {
 #ifdef DEBUGGING
             Serial.println(F("No support for over 16 bit sized messages"));
 #endif
-            while(1) {
-                // halt, can't handle this case
-            }
+            terminateStream(0x89);
+            return socketString;
         }
 
         // get the mask
@@ -329,12 +345,20 @@ String WebSocketServer::handleStream() {
                 return socketString;
             }
         }
+        if (msgtype == 0x89) {
+            sendPong(socketString);
+        } else if (msgtype == 0x8A) {
+#ifdef DEBUGGING
+            Serial.println(F("Received pong"));
+#endif
+            return socketString;
+        }
     }
 
     return socketString;
 }
 
-void WebSocketServer::disconnectStream() {
+void WebSocketServer::terminateStream(uint8_t cause) {
 #ifdef DEBUGGING
     Serial.println(F("Terminating socket"));
 #endif
@@ -347,8 +371,31 @@ void WebSocketServer::disconnectStream() {
 #endif       
     } else {
 
-        // Should send 0x8700 to server to tell it I'm quitting here.
-        socket_client->write((uint8_t) 0x87);
+        // Should send termination sequence (87,88,89) to server to tell it I'm quitting here.
+        socket_client->write((uint8_t) cause);
+        socket_client->write((uint8_t) 0x00);
+    }   
+    
+    socket_client->flush();
+    delay(10);
+    socket_client->stop();
+}
+
+void WebSocketServer::disconnectStream() {
+#ifdef DEBUGGING
+    Serial.println(F("Disconnecting socket"));
+#endif
+
+    if (hixie76style) {
+#ifdef SUPPORT_HIXIE_76
+        // Should send 0xFF00 to server to tell it I'm quitting here.
+        socket_client->write((uint8_t) 0xFF);
+        socket_client->write((uint8_t) 0x00); 
+#endif       
+    } else {
+
+        // Should send 0x8800 to server to tell it I'm quitting here.
+        socket_client->write((uint8_t) 0x88);
         socket_client->write((uint8_t) 0x00);
     }   
     
@@ -382,7 +429,7 @@ void WebSocketServer::sendData(const char *str) {
             socket_client->print(str);
             socket_client->write(0xFF); // Frame end            
         } else {
-            sendEncodedData(str);
+            sendEncodedData(str, 0x81);
         }         
     }
 }
@@ -398,7 +445,7 @@ void WebSocketServer::sendData(String str) {
             socket_client->print(str);
             socket_client->write(0xFF); // Frame end        
         } else {
-            sendEncodedData(str);
+            sendEncodedData(str, 0x81);
         }
     }
 }
@@ -411,11 +458,11 @@ int WebSocketServer::timedRead() {
   return socket_client->read();
 }
 
-void WebSocketServer::sendEncodedData(char *str) {
+void WebSocketServer::sendEncodedData(char *str, uint8_t opcode) {
     int size = strlen(str);
 
     // string type
-    socket_client->write(0x81);
+    socket_client->write(opcode);
 
     // NOTE: no support for > 16-bit sized messages
     if (size > 125) {
@@ -429,11 +476,25 @@ void WebSocketServer::sendEncodedData(char *str) {
     socket_client->print(str);
 }
 
-void WebSocketServer::sendEncodedData(String str) {
+void WebSocketServer::sendEncodedData(String str, uint8_t opcode) {
     int size = str.length() + 1;
     char cstr[size];
 
     str.toCharArray(cstr, size);
 
-    sendEncodedData(cstr);
+    sendEncodedData(cstr, opcode);
+}
+
+void WebSocketServer::sendPing(String str) {
+    sendEncodedData(str, 0x89);
+}
+void WebSocketServer::sendPing(const char *str) {
+    sendEncodedData(str, 0x89);
+}
+
+void WebSocketServer::sendPong(String str) {
+    sendEncodedData(str, 0x8A);
+}
+void WebSocketServer::sendPong(const char *str) {
+    sendEncodedData(str, 0x8A);
 }
