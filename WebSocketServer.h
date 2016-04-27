@@ -83,6 +83,12 @@ public:
     // Write data to the stream
     void sendData(const char *str);
     void sendData(String str);
+    
+    // Disconnect user gracefully.
+    void disconnectStream();
+    
+    void sendPing(String str);
+    void sendPing(const char *str);
 
 private:
     Client *socket_client;
@@ -103,13 +109,16 @@ private:
 #endif
     String handleStream();    
     
-    // Disconnect user gracefully.
-    void disconnectStream();
-    
     int timedRead();
 
-    void sendEncodedData(char *str);
-    void sendEncodedData(String str);
+    void sendEncodedData(char *str, uint8_t);
+    void sendEncodedData(String str, uint8_t);
+    
+    // Disconnect user gracefully.
+    void terminateStream(uint8_t);
+    
+    void sendPong(String str);
+    void sendPong(const char *str);
 };
 
 
